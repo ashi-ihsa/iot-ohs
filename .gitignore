@@ -1,0 +1,30 @@
+# Local environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Installed dependencies and generated output
+node_modules/
+dist/
+build/
+coverage/
+
+# Runtime logs and local data
+*.log
+logs/
+data/
+datasets/
+exports/
+uploads/
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.backup
+*.bak
+
+# Private keys and local OS files
+*.pem
+*.key
+.DS_Store
+Thumbs.db

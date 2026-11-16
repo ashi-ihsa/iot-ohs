@@ -13,3 +13,9 @@ Proyek ini dibagi menjadi 3 komponen utama (folder):
 ├── ingest-worker/       # Layanan cloud worker untuk menangkap MQTT dan menulis ke PostgreSQL
 └── local-monitoring/    # Dashboard Node-RED lokal untuk visualisasi dan pemantauan (Read-Only)
 ```
+
+## Keamanan sebelum push
+
+- Simpan kredensial lokal di file `.env`; jangan commit file tersebut. File `.env.example` hanya berisi placeholder dan boleh dijadikan template.
+- Jangan commit log, dump database, backup, atau data operasional. Data lokasi dan kesehatan pekerja bersifat sensitif; jangan masukkan nilainya ke log atau contoh publik.
+- Jika kredensial pernah ter-push, segera rotasi kredensial tersebut. Menghapus file pada commit terbaru saja tidak menghapusnya dari riwayat Git.
