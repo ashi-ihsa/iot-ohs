@@ -1,33 +1,52 @@
 require('dotenv').config();
 const mqtt = require('mqtt');
 const { Pool } = require('pg');
+const mqttPrefix = process.env.MQTT_PREFIX;
 
-// 1. Konfigurasi Koneksi PostgreSQL Cloud
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    // ssl: { rejectUnauthorized: false } // Aktifkan jika pakai Supabase/Neon
+    // ssl: { rejectUnauthorized: false }
 });
 
-// PENTING: Mencegah aplikasi crash total jika koneksi database terputus sesaat
 pool.on('error', (err) => {
     console.error('❌ Unexpected error on idle PostgreSQL client', err);
-    // Jangan exit proses, biarkan pool mencoba recover
 });
+
+// MEMORY CACHE: Menyimpan daftar deviceId yang valid di memori
+let validDevices = new Set();
+
+// Fungsi untuk memuat ulang daftar device dari database
+async function loadValidDevices() {
+    try {
+        const result = await pool.query('SELECT "id" FROM workers');
+        validDevices.clear();
+        result.rows.forEach(row => validDevices.add(row.id));
+        console.log(`📋 Cache diperbarui: ${validDevices.size} device terdaftar diizinkan.`);
+    } catch (error) {
+        console.error('❌ Gagal memuat daftar device:', error.message);
+    }
+}
 
 // 2. Konfigurasi Koneksi MQTT Broker
 const mqttUrl = process.env.MQTT_URL;
 const client = mqtt.connect(mqttUrl, {
-    reconnectPeriod: 1000 // Coba reconnect setiap 1 detik jika putus
+    reconnectPeriod: 1000
 });
 
-client.on('connect', () => {
+client.on('connect', async () => {
     console.log('✅ Ingest Worker terhubung ke MQTT Broker!');
     
-    client.subscribe('+/telemetry/+', (err) => {
-        if (!err) console.log('📡 Subscribed: +/telemetry/+');
+    // Muat cache device saat pertama kali worker menyala
+    await loadValidDevices();
+
+    // Set interval untuk memperbarui cache setiap 5 menit (tanpa query berlebihan)
+    setInterval(loadValidDevices, 5 * 60 * 1000);
+
+    client.subscribe(`${mqttPrefix}/telemetry/+`, (err) => {
+        if (!err) console.log(`📡 Subscribed: ${mqttPrefix}/telemetry/+`);
     });
-    client.subscribe('+/alert/+', (err) => {
-        if (!err) console.log('🚨 Subscribed: +/alert/+');
+    client.subscribe(`${mqttPrefix}/alert/+`, (err) => {
+        if (!err) console.log(`🚨 Subscribed: ${mqttPrefix}/alert/+`);
     });
 });
 
@@ -43,6 +62,7 @@ client.on('error', (err) => {
 client.on('message', async (topic, payload) => {
     try {
         const topicParts = topic.split('/');
+        // Format topik: [prefix] / [telemetry/alert] / [deviceId]
         const deviceId = topicParts[topicParts.length - 1];
         const messageType = topicParts[topicParts.length - 2]; 
 
@@ -52,6 +72,13 @@ client.on('message', async (topic, payload) => {
             data = JSON.parse(payload.toString());
         } catch (e) {
             console.warn(`⚠️ Payload dari device ${deviceId} bukan format JSON yang valid.`);
+            return;
+        }
+
+        // --- VALIDASI CACHE DI MEMORI ---
+        // Jika device tidak ada di cache, tolak/abaikan langsung tanpa query ke DB
+        if (!validDevices.has(deviceId)) {
+            console.warn(`🚫 Akses ditolak: Device "${deviceId}" tidak terdaftar dalam sistem.`);
             return;
         }
 
@@ -72,7 +99,7 @@ client.on('message', async (topic, payload) => {
             ];
 
             await pool.query(query, values);
-            console.log('📥 Telemetry saved.');
+            console.log(`📥 Telemetry disimpan untuk device: ${deviceId}`);
 
         } else if (messageType === 'alert') {
             const query = `
@@ -82,11 +109,10 @@ client.on('message', async (topic, payload) => {
             const values = [deviceId, timestamp];
 
             await pool.query(query, values);
-            console.warn('⚠️ Alert saved.');
+            console.warn(`⚠️ Alert disimpan untuk device: ${deviceId}`);
         }
 
     } catch (error) {
-        // Menangkap error database tanpa membuat worker mati
         console.error('❌ Gagal menulis ke Database PostgreSQL:', error.message);
     }
 });
